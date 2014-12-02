@@ -1,0 +1,235 @@
+
+//Demo 1 - Intro
+
+//==========================
+//Create basic RDD in Scala:
+//==========================
+
+// create some data
+	val data = 1 to 10000
+
+
+// create an RDD based on that data
+	val distdata = sc.parallelize(data)
+
+// use a filter to select values < 10
+	distdata.filter(_ < 10).collect()
+
+
+//===========
+//Data mining:
+//===========
+
+// load error messages from a log into memory then interactively search for various patterns
+ 
+// base RDD
+	val lines = sc.textFile("log.txt")
+ 
+// transformed RDDs
+	val errors = lines.filter(_.startsWith("ERROR"))
+	val messages = errors.map(_.split("\t")).map(r => r(1))
+	messages.cache()
+ 
+// actions
+	messages.filter(_.contains("mysql")).count()
+	messages.filter(_.contains("php")).count()
+ 
+	val messages = errors.map(_.split("\t")).map(r => r(1))
+	messages.cache()
+
+// action - count  
+	messages.filter(_.contains("mysql")).count()
+	messages.filter(_.contains("php")).count()
+
+// actions - show text
+	messages.filter(_.contains("mysql")).collect()
+
+
+// actions - save to file
+	messages.filter(_.contains("mysql")).saveAsTextFile("log_mysql.out")
+
+
+//===========================
+//Demo 2 - word count & joins
+//===========================
+
+//=====
+//Scala
+//=====
+
+// base RDD 
+	val f = sc.textFile("README.md")
+
+// action - map/reduce
+	val wc = f.flatMap(l => l.split(" ")).map(word => (word, 1)).reduceByKey(_ + _)
+
+// action - count 
+	wc.saveAsTextFile("wc_out")
+
+	wc.filter(_.contains("SMBO")).collect()
+
+//======
+//Python
+//======
+
+	from operator import add
+	f = sc.textFile("README.md")
+	wc = f.flatMap(lambda x: x.split(' ')).map(lambda x: (x, 1)).reduceByKey(add)
+	wc.saveAsTextFile("wc_out")
+
+//=====
+//Joins
+//=====
+
+//define date format
+val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+
+case class Register (d: java.util.Date, uuid: String, cust_id: String, lat: Float, lng: Float)
+case class Click (d: java.util.Date, uuid: String, landing_page: Int)
+
+val reg = sc.textFile("reg.tsv").map(_.split("\t")).map(r => (r(1), Register(format.parse(r(0)), r(1), r(2), r(3).toFloat, r(4).toFloat)))
+val clk = sc.textFile("clk.tsv").map(_.split("\t")).map(c => (c(1), Click(format.parse(c(0)), c(1), c(2).trim.toInt)))
+
+reg.join(clk).collect()
+
+//define date format
+val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
+
+//define table format
+case class Table1 (d: java.util.Date, user_id: String, prod_id: String)
+case class Table2 (d: java.util.Date, user_id: String, prod_desc_1: String, prod_desc_2: String)
+
+//create the RDD and define the driving column for the join
+val tab1 = sc.textFile("tab1.tsv").map(_.split("\t")).map(r => (r(0), Table1(format.parse(r(0)), r(1), r(2))))
+val tab2 = sc.textFile("tab2.tsv").map(_.split("\t")).map(c => (c(0), Table2(format.parse(c(0)), c(1), c(2), c(3) )))
+
+//optionally cache the RDD
+//tab1.cache()
+
+//join the two RDD
+tab1.join(tab2).collect()
+
+//refresh the cached RDD
+//tab1.unpersist();
+
+
+//==================
+//Demo 3 - Spark SQL
+//==================
+
+
+val sqlContext = new org.apache.spark.sql.SQLContext(sc)
+
+import sqlContext._
+
+// Define the schema using a case class.
+case class Person(name: String, age: Int)
+
+// Create an RDD of Person objects and register it as a table.
+val people = sc.textFile("examples/src/main/resources/ people.txt").map(_.split(",")).map(p => Person(p(0), p(1).trim.toInt))
+
+people.registerAsTable("people")
+
+// SQL statements can be run by using the sql methods provided by sqlContext.
+val teenagers = sql("SELECT name FROM people WHERE age >= 13 AND age <= 19")
+
+// The results of SQL queries are SchemaRDDs and support all the
+// normal RDD operations.
+// The columns of a row in the result can be accessed by ordinal.
+teenagers.map(t => "Name: " + t(0)).collect().foreach(println)
+
+
+//========================
+//Demo 4 - Spark Streaming
+//========================
+
+import org.apache.spark._
+import org.apache.spark.streaming._
+import org.apache.spark.streaming.StreamingContext._
+
+// Create a local StreamingContext with two working thread and batch interval of 1 second
+val conf = new SparkConf().setMaster("local[2]").setAppName("NetworkWordCount")
+val ssc = new StreamingContext(conf, Seconds(1))
+
+// Create a DStream that will connect to hostname:port, like localhost:9999
+val lines = ssc.socketTextStream("localhost", 9999)
+
+// Split each line into words
+val words = lines.flatMap(_.split(" "))
+
+
+// Count each word in each batch
+val pairs = words.map(word => (word, 1))
+val wordCounts = pairs.reduceByKey(_ + _)
+
+// Print the first ten elements of each RDD generated in this DStream to the console
+wordCounts.print()
+
+// Start the computation
+ssc.start()
+
+// Wait for the computation to terminate
+ssc.awaitTermination()  
+
+
+//=====================
+//Demo 5 - Spark Graphx
+//=====================
+
+
+import org.apache.spark.graphx._
+import org.apache.spark.rdd.RDD
+ 
+// Create an RDD for the vertices
+val users: RDD[(VertexId, (String, String))] =
+  sc.parallelize(Array((4L, ("Marco", "FE-Italy")), (6L, ("Pedro", "FE-Spain")),
+                       (2L, ("Alex", "Manager")), (3L, ("Shahaf", "FE-Israel")),
+                       (5L, ("Filippo", "FE-Italy"))))
+// Create an RDD for edges
+val relationships: RDD[Edge[String]] =
+  sc.parallelize(Array(Edge(2L, 3L, "Manager"), Edge(2L, 4L, "Manager"),
+                       Edge(2L, 5L, "Manager"), Edge(2L, 6L, "Manager"),
+                       Edge(4L, 5L, "colleague"), Edge(6L, 3L, "team mates"), 
+                       Edge(4L, 0L, "colleague"), Edge(5L, 0L, "colleague")))
+// Define a default user in case there are relationship with missing user
+val defaultUser = ("John Doe", "Missing")
+
+// Build the initial Graph
+val graph = Graph(users, relationships, defaultUser)
+
+// Notice that there is a user 0 (for which we have no information) connected to users
+// 4 (Filippo) and 5 (Alex).
+graph.triplets.map(
+    triplet => triplet.srcAttr._1 + " is the " + triplet.attr + " of " + triplet.dstAttr._1
+  ).collect.foreach(println(_))
+  
+// Remove missing vertices as well as the edges to connected to them
+val validGraph = graph.subgraph(vpred = (id, attr) => attr._2 != "Missing")
+
+// The valid subgraph will disconnect users 4 and 5 by removing user 0
+validGraph.vertices.collect.foreach(println(_))
+validGraph.triplets.map(
+    triplet => triplet.srcAttr._1 + " is the " + triplet.attr + " of " + triplet.dstAttr._1
+  ).collect.foreach(println(_))
+  
+
+//====================
+//Demo 6 - Spark Mllib
+//====================
+
+
+import org.apache.spark.mllib.clustering.KMeans
+import org.apache.spark.mllib.linalg.Vectors
+
+// Load and parse the data
+val data = sc.textFile("kmeans_data.txt")
+val parsedData = data.map(s => Vectors.dense(s.split(' ').map(_.toDouble)))
+
+// Cluster the data into two classes using KMeans
+val numClusters = 2
+val numIterations = 20
+val clusters = KMeans.train(parsedData, numClusters, numIterations)
+
+// Evaluate clustering by computing Within Set Sum of Squared Errors
+val WSSSE = clusters.computeCost(parsedData)
+println("Within Set Sum of Squared Errors = " + WSSSE)
